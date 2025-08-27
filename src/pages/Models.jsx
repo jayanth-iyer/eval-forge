@@ -66,12 +66,15 @@ const Models = () => {
   const testConnection = async (modelId) => {
     try {
       const response = await fetch(`http://localhost:8000/api/models/${modelId}/test`)
-      if (!response.ok) {
-        navigate('/error')
+      if (response.ok) {
+        await fetchModels()
+      } else {
+        console.error('Connection test failed:', response.status)
+        await fetchModels() // Still refresh to show error status
       }
-      await fetchModels()
     } catch (error) {
-      navigate('/error')
+      console.error('Connection test error:', error)
+      await fetchModels() // Still refresh to show error status
     }
   }
 
