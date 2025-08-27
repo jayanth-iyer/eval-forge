@@ -1,8 +1,45 @@
-import React from 'react'
-import { Link } from 'react-router-dom'
+import React, { useState, useEffect } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { Brain, Play, BarChart3, Plus } from 'lucide-react'
 
 const Dashboard = () => {
+  const [stats, setStats] = useState({
+    modelCount: 0,
+    evaluationCount: 0,
+    avgAccuracy: null
+  })
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    fetchDashboardStats()
+  }, [])
+
+  const fetchDashboardStats = async () => {
+    try {
+      // Fetch models
+      const modelsResponse = await fetch('http://localhost:8000/api/models')
+      const models = modelsResponse.ok ? await modelsResponse.json() : []
+
+      // Fetch evaluations
+      const evaluationsResponse = await fetch('http://localhost:8000/api/evaluations')
+      const evaluations = evaluationsResponse.ok ? await evaluationsResponse.json() : []
+
+      // Calculate average accuracy from completed evaluations
+      const completedEvaluations = evaluations.filter(evaluation => evaluation.status === 'completed' && evaluation.accuracy !== null)
+      const avgAccuracy = completedEvaluations.length > 0 
+        ? (completedEvaluations.reduce((sum, evaluation) => sum + evaluation.accuracy, 0) / completedEvaluations.length * 100).toFixed(1)
+        : null
+
+      setStats({
+        modelCount: models.length,
+        evaluationCount: evaluations.length,
+        avgAccuracy
+      })
+    } catch (error) {
+      console.error('Failed to fetch dashboard stats:', error)
+    }
+  }
+
   return (
     <div>
       <div className="mb-8">
@@ -23,7 +60,7 @@ const Dashboard = () => {
                   <dt className="text-sm font-medium text-gray-500 truncate">
                     Configured Models
                   </dt>
-                  <dd className="text-lg font-medium text-gray-900">0</dd>
+                  <dd className="text-lg font-medium text-gray-900">{stats.modelCount}</dd>
                 </dl>
               </div>
             </div>
@@ -41,7 +78,7 @@ const Dashboard = () => {
                   <dt className="text-sm font-medium text-gray-500 truncate">
                     Total Evaluations
                   </dt>
-                  <dd className="text-lg font-medium text-gray-900">0</dd>
+                  <dd className="text-lg font-medium text-gray-900">{stats.evaluationCount}</dd>
                 </dl>
               </div>
             </div>
@@ -59,7 +96,9 @@ const Dashboard = () => {
                   <dt className="text-sm font-medium text-gray-500 truncate">
                     Avg Accuracy
                   </dt>
-                  <dd className="text-lg font-medium text-gray-900">-</dd>
+                  <dd className="text-lg font-medium text-gray-900">
+                    {stats.avgAccuracy ? `${stats.avgAccuracy}%` : '-'}
+                  </dd>
                 </dl>
               </div>
             </div>

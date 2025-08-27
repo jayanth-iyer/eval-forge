@@ -78,19 +78,35 @@ async def test_model_connection(model_id: int, db: Session = Depends(get_db)):
     
     try:
         if db_model.type == "ollama":
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(f"{db_model.endpoint}/api/tags")
                 if response.status_code == 200:
                     tags = response.json()
-                    model_names = [model["name"] for model in tags.get("models", [])]
+                    available_models = tags.get("models", [])
+                    model_names = [model["name"] for model in available_models]
+                    
+                    # Check for exact match first
                     if db_model.model_name in model_names:
                         db_model.status = "connected"
                     else:
-                        db_model.status = "error"
+                        # Check for partial match (e.g., "llama3.2" matches "llama3.2:latest")
+                        partial_match = any(
+                            name.startswith(db_model.model_name + ":") or 
+                            name == db_model.model_name
+                            for name in model_names
+                        )
+                        if partial_match:
+                            db_model.status = "connected"
+                        else:
+                            db_model.status = "error"
                 else:
                     db_model.status = "error"
         else:
             db_model.status = "error"
+    except httpx.TimeoutException:
+        db_model.status = "error"
+    except httpx.ConnectError:
+        db_model.status = "error"
     except Exception:
         db_model.status = "error"
     
