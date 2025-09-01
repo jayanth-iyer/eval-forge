@@ -10,6 +10,7 @@ import io
 from . import models, schemas, database
 from .metrics import calculate_metrics
 from .database import get_db
+from .question_bank import get_random_sample_dataset
 
 app = FastAPI(title="Eval Forge API", version="1.0.0")
 
@@ -25,19 +26,6 @@ app.add_middleware(
 # Create tables
 models.Base.metadata.create_all(bind=database.engine)
 
-# Sample dataset for testing
-SAMPLE_DATASET = [
-    {"question": "What is the capital of France?", "answer": "Paris"},
-    {"question": "What is 2 + 2?", "answer": "4"},
-    {"question": "Who wrote Romeo and Juliet?", "answer": "William Shakespeare"},
-    {"question": "What is the largest planet in our solar system?", "answer": "Jupiter"},
-    {"question": "What year did World War II end?", "answer": "1945"},
-    {"question": "What is the chemical symbol for gold?", "answer": "Au"},
-    {"question": "How many continents are there?", "answer": "7"},
-    {"question": "What is the square root of 64?", "answer": "8"},
-    {"question": "Who painted the Mona Lisa?", "answer": "Leonardo da Vinci"},
-    {"question": "What is the speed of light in vacuum?", "answer": "299,792,458 meters per second"}
-]
 
 @app.get("/")
 async def root():
@@ -155,7 +143,7 @@ async def create_evaluation(
     # Handle dataset
     questions = []
     if use_sample:
-        questions = SAMPLE_DATASET
+        questions = get_random_sample_dataset(10)
     elif dataset_file:
         content = await dataset_file.read()
         csv_content = content.decode('utf-8')
@@ -228,9 +216,7 @@ async def run_evaluation(evaluation_id: int, db: Session = Depends(get_db)):
                             correct_count += 1
                         
                         # Calculate advanced metrics
-                        print(f"Calculating metrics for: '{question.expected_answer}' vs '{model_response}'")
                         metrics = calculate_metrics(question.expected_answer, model_response)
-                        print(f"Metrics calculated: {metrics}")
                         
                         # Store result with advanced metrics
                         db_result = models.Result(
@@ -282,7 +268,6 @@ async def run_evaluation(evaluation_id: int, db: Session = Depends(get_db)):
         valid_semantic = [r.semantic_similarity for r in all_results if r.semantic_similarity is not None]
         valid_response_times = [r.response_time for r in all_results if r.response_time is not None]
         
-        print(f"Found {len(all_results)} results, valid metrics: BLEU={len(valid_bleu)}, ROUGE1={len(valid_rouge1)}, ROUGE2={len(valid_rouge2)}, ROUGEL={len(valid_rougel)}, Semantic={len(valid_semantic)}")
         
         # Update evaluation with results and aggregate metrics
         db_evaluation.status = "completed"
@@ -299,7 +284,6 @@ async def run_evaluation(evaluation_id: int, db: Session = Depends(get_db)):
         db_evaluation.avg_semantic_similarity = sum(valid_semantic) / len(valid_semantic) if valid_semantic else None
         db_evaluation.avg_response_time = sum(valid_response_times) / len(valid_response_times) if valid_response_times else None
         
-        print(f"Storing aggregate metrics: BLEU={db_evaluation.avg_bleu_score}, ROUGE1={db_evaluation.avg_rouge_1_score}, ROUGE2={db_evaluation.avg_rouge_2_score}, ROUGEL={db_evaluation.avg_rouge_l_score}, Semantic={db_evaluation.avg_semantic_similarity}")
         
         db.commit()
         
