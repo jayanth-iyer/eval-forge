@@ -32,6 +32,14 @@ class Evaluation(Base):
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     
+    # Advanced metrics aggregates
+    avg_bleu_score = Column(Float, nullable=True)
+    avg_rouge_1_score = Column(Float, nullable=True)
+    avg_rouge_2_score = Column(Float, nullable=True)
+    avg_rouge_l_score = Column(Float, nullable=True)
+    avg_semantic_similarity = Column(Float, nullable=True)
+    avg_response_time = Column(Float, nullable=True)
+    
     model = relationship("Model", back_populates="evaluations")
     questions = relationship("Question", back_populates="evaluation")
     results = relationship("Result", back_populates="evaluation")
@@ -56,5 +64,12 @@ class Result(Base):
     model_response = Column(Text)
     is_correct = Column(Boolean)
     response_time = Column(Integer)  # in milliseconds
+    
+    # Advanced metrics
+    bleu_score = Column(Float, nullable=True)
+    rouge_1_score = Column(Float, nullable=True)
+    rouge_2_score = Column(Float, nullable=True)
+    rouge_l_score = Column(Float, nullable=True)
+    semantic_similarity = Column(Float, nullable=True)
     
     evaluation = relationship("Evaluation", back_populates="results")

@@ -40,6 +40,14 @@ class Evaluation(EvaluationBase):
     completed_at: Optional[datetime] = None
     model_name: Optional[str] = None
     
+    # Advanced metrics
+    avg_bleu_score: Optional[float] = None
+    avg_rouge_1_score: Optional[float] = None
+    avg_rouge_2_score: Optional[float] = None
+    avg_rouge_l_score: Optional[float] = None
+    avg_semantic_similarity: Optional[float] = None
+    avg_response_time: Optional[float] = None
+    
     class Config:
         from_attributes = True
 
@@ -64,6 +72,13 @@ class ResultBase(BaseModel):
 class Result(ResultBase):
     id: int
     evaluation_id: int
+    
+    # Advanced metrics
+    bleu_score: Optional[float] = None
+    rouge_1_score: Optional[float] = None
+    rouge_2_score: Optional[float] = None
+    rouge_l_score: Optional[float] = None
+    semantic_similarity: Optional[float] = None
     
     class Config:
         from_attributes = True

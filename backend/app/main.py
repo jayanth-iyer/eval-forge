@@ -1,15 +1,14 @@
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from datetime import datetime
 from typing import List, Optional
-import csv
-import io
-import json
 import httpx
 import time
-from datetime import datetime
-
+import csv
+import io
 from . import models, schemas, database
+from .metrics import calculate_metrics
 from .database import get_db
 
 app = FastAPI(title="Eval Forge API", version="1.0.0")
@@ -228,14 +227,24 @@ async def run_evaluation(evaluation_id: int, db: Session = Depends(get_db)):
                         if is_correct:
                             correct_count += 1
                         
-                        # Store result
+                        # Calculate advanced metrics
+                        print(f"Calculating metrics for: '{question.expected_answer}' vs '{model_response}'")
+                        metrics = calculate_metrics(question.expected_answer, model_response)
+                        print(f"Metrics calculated: {metrics}")
+                        
+                        # Store result with advanced metrics
                         db_result = models.Result(
                             evaluation_id=evaluation_id,
                             question=question.question,
                             expected_answer=question.expected_answer,
                             model_response=model_response,
                             is_correct=is_correct,
-                            response_time=int((time.time() - start_time) * 1000)
+                            response_time=int((time.time() - start_time) * 1000),
+                            bleu_score=metrics.get('bleu_score'),
+                            rouge_1_score=metrics.get('rouge1'),
+                            rouge_2_score=metrics.get('rouge2'),
+                            rouge_l_score=metrics.get('rougeL'),
+                            semantic_similarity=metrics.get('semantic_similarity')
                         )
                         db.add(db_result)
                     else:
@@ -262,12 +271,35 @@ async def run_evaluation(evaluation_id: int, db: Session = Depends(get_db)):
                 )
                 db.add(db_result)
         
-        # Update evaluation with results
+        # Calculate aggregate metrics from all results
+        all_results = db.query(models.Result).filter(models.Result.evaluation_id == evaluation_id).all()
+        
+        # Calculate averages for advanced metrics (excluding None values)
+        valid_bleu = [r.bleu_score for r in all_results if r.bleu_score is not None]
+        valid_rouge1 = [r.rouge_1_score for r in all_results if r.rouge_1_score is not None]
+        valid_rouge2 = [r.rouge_2_score for r in all_results if r.rouge_2_score is not None]
+        valid_rougel = [r.rouge_l_score for r in all_results if r.rouge_l_score is not None]
+        valid_semantic = [r.semantic_similarity for r in all_results if r.semantic_similarity is not None]
+        valid_response_times = [r.response_time for r in all_results if r.response_time is not None]
+        
+        print(f"Found {len(all_results)} results, valid metrics: BLEU={len(valid_bleu)}, ROUGE1={len(valid_rouge1)}, ROUGE2={len(valid_rouge2)}, ROUGEL={len(valid_rougel)}, Semantic={len(valid_semantic)}")
+        
+        # Update evaluation with results and aggregate metrics
         db_evaluation.status = "completed"
         db_evaluation.completed_at = datetime.utcnow()
         db_evaluation.accuracy = correct_count / total_count if total_count > 0 else 0
         db_evaluation.correct_answers = correct_count
         db_evaluation.incorrect_answers = total_count - correct_count
+        
+        # Store aggregate advanced metrics
+        db_evaluation.avg_bleu_score = sum(valid_bleu) / len(valid_bleu) if valid_bleu else None
+        db_evaluation.avg_rouge_1_score = sum(valid_rouge1) / len(valid_rouge1) if valid_rouge1 else None
+        db_evaluation.avg_rouge_2_score = sum(valid_rouge2) / len(valid_rouge2) if valid_rouge2 else None
+        db_evaluation.avg_rouge_l_score = sum(valid_rougel) / len(valid_rougel) if valid_rougel else None
+        db_evaluation.avg_semantic_similarity = sum(valid_semantic) / len(valid_semantic) if valid_semantic else None
+        db_evaluation.avg_response_time = sum(valid_response_times) / len(valid_response_times) if valid_response_times else None
+        
+        print(f"Storing aggregate metrics: BLEU={db_evaluation.avg_bleu_score}, ROUGE1={db_evaluation.avg_rouge_1_score}, ROUGE2={db_evaluation.avg_rouge_2_score}, ROUGEL={db_evaluation.avg_rouge_l_score}, Semantic={db_evaluation.avg_semantic_similarity}")
         
         db.commit()
         
