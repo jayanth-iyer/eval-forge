@@ -216,7 +216,9 @@ async def run_evaluation(evaluation_id: int, db: Session = Depends(get_db)):
                             correct_count += 1
                         
                         # Calculate advanced metrics
+
                         metrics = calculate_metrics(question.expected_answer, model_response)
+                        #print(f"Metrics calculated: {metrics}")
                         
                         # Store result with advanced metrics
                         db_result = models.Result(
