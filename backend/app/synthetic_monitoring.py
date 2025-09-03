@@ -1,20 +1,31 @@
 import httpx
 import time
 import json
-from datetime import datetime
+import ssl
+import socket
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from . import models, schemas
 
 class SyntheticMonitoringService:
     
     async def execute_api_test(self, test: models.SyntheticTest) -> Dict:
-        """Execute API/HTTP test"""
+        """Execute API/HTTP test with authentication and enhanced validation"""
         start_time = time.time()
         
         try:
             headers = json.loads(test.headers) if test.headers else {}
             body = json.loads(test.body) if test.body else None
+            
+            # Add authentication headers
+            if test.auth_type == "api_key" and test.auth_credentials:
+                auth_data = json.loads(test.auth_credentials)
+                headers[auth_data.get("header_name", "X-API-Key")] = auth_data.get("key")
+            elif test.auth_type == "bearer_token" and test.auth_credentials:
+                auth_data = json.loads(test.auth_credentials)
+                headers["Authorization"] = f"Bearer {auth_data.get('token')}"
             
             async with httpx.AsyncClient(timeout=test.timeout) as client:
                 response = await client.request(
@@ -76,9 +87,9 @@ class SyntheticMonitoringService:
                 "first_byte_time": None
             }
     
-    async def execute_browser_test(self, test: models.SyntheticTest) -> Dict:
+    def execute_browser_test(self, test: models.SyntheticTest) -> Dict:
         """Execute browser automation test - Placeholder for now"""
-        # TODO: Implement browser automation when Playwright is available
+        # Browser automation will be implemented with Playwright in future phase
         return {
             "status": "error",
             "response_time": 0,
@@ -92,10 +103,15 @@ class SyntheticMonitoringService:
         }
     
     async def execute_uptime_test(self, test: models.SyntheticTest) -> Dict:
-        """Execute simple uptime/availability test"""
+        """Execute uptime test with SSL certificate checking"""
         start_time = time.time()
         
         try:
+            # SSL certificate check if enabled
+            ssl_info = None
+            if test.ssl_check_enabled and test.url.startswith('https://'):
+                ssl_info = self._check_ssl_certificate(test.url)
+            
             async with httpx.AsyncClient(timeout=test.timeout) as client:
                 response = await client.get(test.url)
                 
@@ -105,12 +121,23 @@ class SyntheticMonitoringService:
                 # For uptime tests, we just check if we get any 2xx response
                 success = 200 <= response.status_code < 300
                 
+                # Check SSL certificate expiry if enabled
+                if ssl_info and ssl_info.get("days_until_expiry", 365) < 30:
+                    success = False
+                
+                error_msg = None
+                if not success:
+                    if ssl_info and ssl_info.get("days_until_expiry", 365) < 30:
+                        error_msg = f"SSL certificate expires in {ssl_info['days_until_expiry']} days"
+                    else:
+                        error_msg = f"HTTP {response.status_code}"
+                
                 return {
                     "status": "success" if success else "failure",
                     "response_time": response_time,
                     "status_code": response.status_code,
                     "response_body": f"HTTP {response.status_code}",
-                    "error_message": None if success else f"HTTP {response.status_code}",
+                    "error_message": error_msg,
                     "dns_time": None,
                     "connect_time": None,
                     "ssl_time": None,
@@ -188,6 +215,78 @@ class SyntheticMonitoringService:
         db.refresh(execution)
         
         return execution
+    
+    def _check_ssl_certificate(self, url: str) -> Dict:
+        """Check SSL certificate expiry for HTTPS URLs"""
+        try:
+            from urllib.parse import urlparse
+            parsed_url = urlparse(url)
+            hostname = parsed_url.hostname
+            port = parsed_url.port or 443
+            
+            context = ssl.create_default_context()
+            with socket.create_connection((hostname, port), timeout=10) as sock:
+                with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                    cert = ssock.getpeercert()
+                    
+            # Parse expiry date
+            expiry_date = datetime.strptime(cert['notAfter'], '%b %d %H:%M:%S %Y %Z')
+            days_until_expiry = (expiry_date - datetime.now()).days
+            
+            return {
+                "days_until_expiry": days_until_expiry,
+                "expiry_date": expiry_date.isoformat(),
+                "issuer": cert.get('issuer', [{}])[0].get('organizationName', 'Unknown')
+            }
+        except Exception as e:
+            return {
+                "days_until_expiry": 0,
+                "error": str(e)
+            }
+    
+    def get_monitoring_metrics(self, db: Session, test_type: str = None) -> Dict:
+        """Calculate real metrics for monitoring types"""
+        try:
+            # Base query for executions
+            query = db.query(models.SyntheticExecution).join(models.SyntheticTest)
+            
+            if test_type:
+                query = query.filter(models.SyntheticTest.test_type == test_type)
+            
+            # Get executions from last 24 hours
+            since = datetime.now() - timedelta(hours=24)
+            recent_executions = query.filter(models.SyntheticExecution.executed_at >= since).all()
+            
+            if not recent_executions:
+                return {
+                    "success_rate": 0.0,
+                    "avg_response_time": 0.0,
+                    "total_tests": 0,
+                    "successful_tests": 0
+                }
+            
+            total_tests = len(recent_executions)
+            successful_tests = len([e for e in recent_executions if e.status == "success"])
+            success_rate = (successful_tests / total_tests) * 100 if total_tests > 0 else 0.0
+            
+            # Calculate average response time for successful tests only
+            successful_response_times = [e.response_time for e in recent_executions if e.status == "success" and e.response_time]
+            avg_response_time = sum(successful_response_times) / len(successful_response_times) if successful_response_times else 0.0
+            
+            return {
+                "success_rate": round(success_rate, 1),
+                "avg_response_time": round(avg_response_time, 0),
+                "total_tests": total_tests,
+                "successful_tests": successful_tests
+            }
+        except Exception:
+            # Return default values on error
+            return {
+                "success_rate": 0.0,
+                "avg_response_time": 0.0,
+                "total_tests": 0,
+                "successful_tests": 0
+            }
 
 # Global service instance
 synthetic_service = SyntheticMonitoringService()

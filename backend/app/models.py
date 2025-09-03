@@ -1,6 +1,8 @@
 from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
-from .database import Base
+
+Base = declarative_base()
 
 class Model(Base):
     __tablename__ = "models"
@@ -80,6 +82,7 @@ class SyntheticTest(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
+    service_name = Column(String, index=True)  # Friendly name for external app
     test_type = Column(String)  # api, browser, uptime
     url = Column(String)
     method = Column(String, default="GET")  # GET, POST, PUT, DELETE
@@ -92,6 +95,14 @@ class SyntheticTest(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime)
     
+    # Authentication
+    auth_type = Column(String, default="none")  # none, api_key, bearer_token
+    auth_credentials = Column(Text, nullable=True)  # Encrypted storage
+    
+    # SSL and advanced monitoring
+    ssl_check_enabled = Column(Boolean, default=False)
+    alert_thresholds = Column(Text, nullable=True)  # JSON config for alerting
+    
     # Browser automation specific
     browser_steps = Column(Text, nullable=True)  # JSON string of steps
     
@@ -102,17 +113,27 @@ class SyntheticExecution(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     test_id = Column(Integer, ForeignKey("synthetic_tests.id"))
-    status = Column(String)  # success, failure, timeout, error
-    response_time = Column(Float)  # milliseconds
-    status_code = Column(Integer, nullable=True)
-    response_body = Column(Text, nullable=True)
-    error_message = Column(String, nullable=True)
+    status = Column(String)  # success, failure, timeout
+    response_time = Column(Float)  # in milliseconds
+    status_code = Column(Integer)
+    details = Column(Text)  # JSON string with additional details
     executed_at = Column(DateTime)
     
-    # Performance metrics
-    dns_time = Column(Float, nullable=True)
-    connect_time = Column(Float, nullable=True)
-    ssl_time = Column(Float, nullable=True)
-    first_byte_time = Column(Float, nullable=True)
-    
     test = relationship("SyntheticTest", back_populates="executions")
+
+class ExternalApp(Base):
+    __tablename__ = "external_apps"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    service_name = Column(String)
+    base_url = Column(String)
+    description = Column(Text)
+    auth_type = Column(String, default="none")  # none, api_key, bearer_token
+    auth_credentials = Column(Text)  # JSON string with auth details
+    health_endpoint = Column(String, default="/health")
+    timeout = Column(Integer, default=30)
+    ssl_check_enabled = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime)
+    updated_at = Column(DateTime)

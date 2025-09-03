@@ -5,8 +5,10 @@ const SyntheticMonitoring = () => {
   const [activeFeature, setActiveFeature] = useState('user-journey')
   const [tests, setTests] = useState([])
   const [executions, setExecutions] = useState([])
+  const [metrics, setMetrics] = useState({ uptime: {}, api: {}, browser: {} })
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
 
   const features = [
     { id: 'user-journey', name: 'User Journey Simulation', icon: Play },
@@ -14,41 +16,65 @@ const SyntheticMonitoring = () => {
     { id: 'test-results', name: 'Test Results', icon: BarChart3 },
   ]
 
-  // Fetch tests and executions
+  // Fetch tests, executions, and metrics
   useEffect(() => {
     fetchTests()
     fetchExecutions()
+    fetchMetrics()
   }, [])
 
   const fetchTests = async () => {
     try {
       const response = await fetch('http://localhost:8000/api/synthetic-tests')
+      if (!response.ok) throw new Error('Failed to fetch tests')
       const data = await response.json()
       setTests(data)
+      setError(null)
     } catch (error) {
       console.error('Error fetching tests:', error)
+      setError('Something went wrong while fetching tests')
     }
   }
 
   const fetchExecutions = async () => {
     try {
       const response = await fetch('http://localhost:8000/api/synthetic-executions')
+      if (!response.ok) throw new Error('Failed to fetch executions')
       const data = await response.json()
       setExecutions(data)
+      setError(null)
     } catch (error) {
       console.error('Error fetching executions:', error)
+      setError('Something went wrong while fetching executions')
+    }
+  }
+
+  const fetchMetrics = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/api/synthetic-monitoring/metrics')
+      if (!response.ok) throw new Error('Failed to fetch metrics')
+      const data = await response.json()
+      setMetrics(data)
+      setError(null)
+    } catch (error) {
+      console.error('Error fetching metrics:', error)
+      setError('Something went wrong while fetching metrics')
     }
   }
 
   const executeTest = async (testId) => {
     setLoading(true)
     try {
-      await fetch(`http://localhost:8000/api/synthetic-tests/${testId}/execute`, {
+      const response = await fetch(`http://localhost:8000/api/synthetic-tests/${testId}/execute`, {
         method: 'POST'
       })
+      if (!response.ok) throw new Error('Failed to execute test')
       await fetchExecutions()
+      await fetchMetrics()
+      setError(null)
     } catch (error) {
       console.error('Error executing test:', error)
+      setError('Something went wrong while executing test')
     }
     setLoading(false)
   }
@@ -57,13 +83,17 @@ const SyntheticMonitoring = () => {
     if (!confirm('Are you sure you want to delete this test?')) return
     
     try {
-      await fetch(`http://localhost:8000/api/synthetic-tests/${testId}`, {
+      const response = await fetch(`http://localhost:8000/api/synthetic-tests/${testId}`, {
         method: 'DELETE'
       })
+      if (!response.ok) throw new Error('Failed to delete test')
       await fetchTests()
       await fetchExecutions()
+      await fetchMetrics()
+      setError(null)
     } catch (error) {
       console.error('Error deleting test:', error)
+      setError('Something went wrong while deleting test')
     }
   }
 
@@ -151,6 +181,12 @@ const SyntheticMonitoring = () => {
     <div className="space-y-6">
       <h2 className="text-2xl font-bold text-gray-900">Monitoring Types</h2>
       
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-md p-4">
+          <p className="text-red-800">{error}</p>
+        </div>
+      )}
+      
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-white rounded-lg shadow-md p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Uptime Monitoring</h3>
@@ -162,7 +198,13 @@ const SyntheticMonitoring = () => {
             </div>
             <div className="flex justify-between">
               <span className="text-sm text-gray-500">Success Rate:</span>
-              <span className="text-sm font-medium text-green-600">98.5%</span>
+              <span className="text-sm font-medium text-green-600">
+                {metrics.uptime.success_rate ? `${metrics.uptime.success_rate}%` : '0%'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-sm text-gray-500">Total Tests (24h):</span>
+              <span className="text-sm font-medium">{metrics.uptime.total_tests || 0}</span>
             </div>
           </div>
         </div>
@@ -177,7 +219,15 @@ const SyntheticMonitoring = () => {
             </div>
             <div className="flex justify-between">
               <span className="text-sm text-gray-500">Avg Response:</span>
-              <span className="text-sm font-medium text-blue-600">245ms</span>
+              <span className="text-sm font-medium text-blue-600">
+                {metrics.api.avg_response_time ? `${Math.round(metrics.api.avg_response_time)}ms` : '0ms'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-sm text-gray-500">Success Rate:</span>
+              <span className="text-sm font-medium text-green-600">
+                {metrics.api.success_rate ? `${metrics.api.success_rate}%` : '0%'}
+              </span>
             </div>
           </div>
         </div>
@@ -192,7 +242,13 @@ const SyntheticMonitoring = () => {
             </div>
             <div className="flex justify-between">
               <span className="text-sm text-gray-500">Success Rate:</span>
-              <span className="text-sm font-medium text-green-600">94.2%</span>
+              <span className="text-sm font-medium text-green-600">
+                {metrics.browser.success_rate ? `${metrics.browser.success_rate}%` : '0%'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-sm text-gray-500">Status:</span>
+              <span className="text-sm font-medium text-yellow-600">Coming Soon</span>
             </div>
           </div>
         </div>
@@ -331,31 +387,103 @@ const SyntheticMonitoring = () => {
 const CreateTestModal = ({ onClose, onSuccess }) => {
   const [formData, setFormData] = useState({
     name: '',
+    service_name: '',
     test_type: 'api',
     url: '',
     method: 'GET',
     expected_status: 200,
+    expected_response_contains: '',
     timeout: 30,
     interval: 300,
-    is_active: true
+    is_active: true,
+    auth_type: 'none',
+    auth_credentials: '',
+    ssl_check_enabled: false
   })
+  const [externalApps, setExternalApps] = useState([])
+  const [selectedApp, setSelectedApp] = useState('')
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    fetchExternalApps()
+  }, [])
+
+  const fetchExternalApps = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/api/external-apps')
+      if (response.ok) {
+        const data = await response.json()
+        setExternalApps(data.filter(app => app.is_active))
+      }
+    } catch (error) {
+      console.error('Error fetching external apps:', error)
+    }
+  }
+
+  const handleAppSelection = (appId) => {
+    const app = externalApps.find(a => a.id === parseInt(appId))
+    if (app) {
+      setFormData({
+        ...formData,
+        service_name: app.service_name,
+        url: app.base_url + app.health_endpoint,
+        auth_type: app.auth_type,
+        auth_credentials: app.auth_type !== 'none' ? '***' : '',
+        timeout: app.timeout,
+        ssl_check_enabled: app.ssl_check_enabled
+      })
+    } else {
+      // Reset to manual configuration
+      setFormData({
+        ...formData,
+        service_name: '',
+        url: '',
+        auth_type: 'none',
+        auth_credentials: '',
+        timeout: 30,
+        ssl_check_enabled: false
+      })
+    }
+    setSelectedApp(appId)
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     try {
+      // Prepare auth credentials as JSON if provided
+      let processedData = { ...formData }
+      if (formData.auth_type !== 'none' && formData.auth_credentials) {
+        if (formData.auth_type === 'api_key') {
+          processedData.auth_credentials = JSON.stringify({
+            header_name: 'X-API-Key',
+            key: formData.auth_credentials
+          })
+        } else if (formData.auth_type === 'bearer_token') {
+          processedData.auth_credentials = JSON.stringify({
+            token: formData.auth_credentials
+          })
+        }
+      } else {
+        processedData.auth_credentials = null
+      }
+      
       const response = await fetch('http://localhost:8000/api/synthetic-tests', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(processedData),
       })
       
       if (response.ok) {
         onSuccess()
+        setError(null)
+      } else {
+        throw new Error('Failed to create test')
       }
     } catch (error) {
       console.error('Error creating test:', error)
+      setError('Something went wrong while creating test')
     }
   }
 
@@ -363,6 +491,12 @@ const CreateTestModal = ({ onClose, onSuccess }) => {
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg p-6 w-full max-w-md">
         <h2 className="text-xl font-bold text-gray-900 mb-4">Create Synthetic Test</h2>
+        
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-md p-3 mb-4">
+            <p className="text-red-800 text-sm">{error}</p>
+          </div>
+        )}
         
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -375,6 +509,44 @@ const CreateTestModal = ({ onClose, onSuccess }) => {
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Configure From External App
+            </label>
+            <select
+              value={selectedApp}
+              onChange={(e) => handleAppSelection(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Manual Configuration</option>
+              {externalApps.map((app) => (
+                <option key={app.id} value={app.id}>
+                  {app.name} ({app.service_name})
+                </option>
+              ))}
+            </select>
+            {externalApps.length === 0 && (
+              <p className="text-sm text-gray-500 mt-1">
+                No external apps configured. <a href="/external-apps" className="text-blue-600 hover:underline">Add one here</a>.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              External Service Name
+            </label>
+            <input
+              type="text"
+              value={formData.service_name}
+              onChange={(e) => setFormData({ ...formData, service_name: e.target.value })}
+              placeholder="e.g., My E-commerce API"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+              disabled={selectedApp !== ''}
             />
           </div>
 
@@ -401,8 +573,28 @@ const CreateTestModal = ({ onClose, onSuccess }) => {
               type="url"
               value={formData.url}
               onChange={(e) => setFormData({ ...formData, url: e.target.value })}
+              placeholder="https://api.example.com/health"
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
+              disabled={selectedApp !== ''}
+            />
+            {selectedApp !== '' && (
+              <p className="text-sm text-gray-500 mt-1">
+                URL configured from selected external app
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Expected Response Contains (Optional)
+            </label>
+            <input
+              type="text"
+              value={formData.expected_response_contains}
+              onChange={(e) => setFormData({ ...formData, expected_response_contains: e.target.value })}
+              placeholder="success, OK, healthy"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
 
@@ -462,17 +654,64 @@ const CreateTestModal = ({ onClose, onSuccess }) => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="is_active"
-              checked={formData.is_active}
-              onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
-              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-            />
-            <label htmlFor="is_active" className="text-sm text-gray-700">
-              Active
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Authentication
             </label>
+            <select
+              value={formData.auth_type}
+              onChange={(e) => setFormData({ ...formData, auth_type: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="none">No Authentication</option>
+              <option value="api_key">API Key</option>
+              <option value="bearer_token">Bearer Token</option>
+            </select>
+          </div>
+
+          {formData.auth_type !== 'none' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                {formData.auth_type === 'api_key' ? 'API Key' : 'Bearer Token'}
+              </label>
+              <input
+                type="password"
+                value={formData.auth_credentials}
+                onChange={(e) => setFormData({ ...formData, auth_credentials: e.target.value })}
+                placeholder={formData.auth_type === 'api_key' ? 'your-api-key' : 'your-bearer-token'}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          )}
+
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="is_active"
+                checked={formData.is_active}
+                onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <label htmlFor="is_active" className="text-sm text-gray-700">
+                Active
+              </label>
+            </div>
+            
+            {formData.test_type === 'uptime' && formData.url.startsWith('https://') && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="ssl_check"
+                  checked={formData.ssl_check_enabled}
+                  onChange={(e) => setFormData({ ...formData, ssl_check_enabled: e.target.checked })}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <label htmlFor="ssl_check" className="text-sm text-gray-700">
+                  SSL Check
+                </label>
+              </div>
+            )}
           </div>
 
           <div className="flex justify-end gap-3 pt-4">
