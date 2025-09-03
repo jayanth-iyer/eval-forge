@@ -82,3 +82,53 @@ class Result(ResultBase):
     
     class Config:
         from_attributes = True
+
+# Synthetic Monitoring Schemas
+class SyntheticTestBase(BaseModel):
+    name: str
+    test_type: str  # api, browser, uptime
+    url: str
+    method: str = "GET"
+    headers: Optional[str] = None
+    body: Optional[str] = None
+    expected_status: int = 200
+    expected_response_contains: Optional[str] = None
+    timeout: int = 30
+    interval: int = 300
+    is_active: bool = True
+    browser_steps: Optional[str] = None
+
+class SyntheticTestCreate(SyntheticTestBase):
+    pass
+
+class SyntheticTest(SyntheticTestBase):
+    id: int
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class SyntheticExecutionBase(BaseModel):
+    status: str
+    response_time: float
+    status_code: Optional[int] = None
+    response_body: Optional[str] = None
+    error_message: Optional[str] = None
+    dns_time: Optional[float] = None
+    connect_time: Optional[float] = None
+    ssl_time: Optional[float] = None
+    first_byte_time: Optional[float] = None
+
+class SyntheticExecution(SyntheticExecutionBase):
+    id: int
+    test_id: int
+    executed_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class BrowserStep(BaseModel):
+    action: str  # navigate, click, type, wait, screenshot
+    selector: Optional[str] = None
+    value: Optional[str] = None
+    timeout: int = 30

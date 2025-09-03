@@ -73,3 +73,46 @@ class Result(Base):
     semantic_similarity = Column(Float, nullable=True)
     
     evaluation = relationship("Evaluation", back_populates="results")
+
+# Synthetic Monitoring Models
+class SyntheticTest(Base):
+    __tablename__ = "synthetic_tests"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    test_type = Column(String)  # api, browser, uptime
+    url = Column(String)
+    method = Column(String, default="GET")  # GET, POST, PUT, DELETE
+    headers = Column(Text, nullable=True)  # JSON string
+    body = Column(Text, nullable=True)  # JSON string
+    expected_status = Column(Integer, default=200)
+    expected_response_contains = Column(String, nullable=True)
+    timeout = Column(Integer, default=30)  # seconds
+    interval = Column(Integer, default=300)  # seconds (5 minutes default)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime)
+    
+    # Browser automation specific
+    browser_steps = Column(Text, nullable=True)  # JSON string of steps
+    
+    executions = relationship("SyntheticExecution", back_populates="test")
+
+class SyntheticExecution(Base):
+    __tablename__ = "synthetic_executions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    test_id = Column(Integer, ForeignKey("synthetic_tests.id"))
+    status = Column(String)  # success, failure, timeout, error
+    response_time = Column(Float)  # milliseconds
+    status_code = Column(Integer, nullable=True)
+    response_body = Column(Text, nullable=True)
+    error_message = Column(String, nullable=True)
+    executed_at = Column(DateTime)
+    
+    # Performance metrics
+    dns_time = Column(Float, nullable=True)
+    connect_time = Column(Float, nullable=True)
+    ssl_time = Column(Float, nullable=True)
+    first_byte_time = Column(Float, nullable=True)
+    
+    test = relationship("SyntheticTest", back_populates="executions")

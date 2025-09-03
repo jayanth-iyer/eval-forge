@@ -11,6 +11,7 @@ from . import models, schemas, database
 from .metrics import calculate_metrics
 from .database import get_db
 from .question_bank import get_random_sample_dataset
+from .synthetic_monitoring import synthetic_service
 
 app = FastAPI(title="Eval Forge API", version="1.0.0")
 
@@ -354,3 +355,75 @@ def delete_evaluation_results(evaluation_id: int, db: Session = Depends(get_db))
     db.commit()
     
     return {"message": "Evaluation and results deleted"}
+
+# Synthetic Monitoring endpoints
+@app.get("/api/synthetic-tests", response_model=List[schemas.SyntheticTest])
+def get_synthetic_tests(db: Session = Depends(get_db)):
+    return db.query(models.SyntheticTest).all()
+
+@app.post("/api/synthetic-tests", response_model=schemas.SyntheticTest)
+def create_synthetic_test(test: schemas.SyntheticTestCreate, db: Session = Depends(get_db)):
+    db_test = models.SyntheticTest(**test.dict(), created_at=datetime.now())
+    db.add(db_test)
+    db.commit()
+    db.refresh(db_test)
+    return db_test
+
+@app.get("/api/synthetic-tests/{test_id}", response_model=schemas.SyntheticTest)
+def get_synthetic_test(test_id: int, db: Session = Depends(get_db)):
+    db_test = db.query(models.SyntheticTest).filter(models.SyntheticTest.id == test_id).first()
+    if not db_test:
+        raise HTTPException(status_code=404, detail="Synthetic test not found")
+    return db_test
+
+@app.put("/api/synthetic-tests/{test_id}", response_model=schemas.SyntheticTest)
+def update_synthetic_test(test_id: int, test: schemas.SyntheticTestCreate, db: Session = Depends(get_db)):
+    db_test = db.query(models.SyntheticTest).filter(models.SyntheticTest.id == test_id).first()
+    if not db_test:
+        raise HTTPException(status_code=404, detail="Synthetic test not found")
+    
+    for key, value in test.dict().items():
+        setattr(db_test, key, value)
+    
+    db.commit()
+    db.refresh(db_test)
+    return db_test
+
+@app.delete("/api/synthetic-tests/{test_id}")
+def delete_synthetic_test(test_id: int, db: Session = Depends(get_db)):
+    db_test = db.query(models.SyntheticTest).filter(models.SyntheticTest.id == test_id).first()
+    if not db_test:
+        raise HTTPException(status_code=404, detail="Synthetic test not found")
+    
+    # Delete executions first
+    db.query(models.SyntheticExecution).filter(models.SyntheticExecution.test_id == test_id).delete()
+    db.delete(db_test)
+    db.commit()
+    
+    return {"message": "Synthetic test deleted"}
+
+@app.post("/api/synthetic-tests/{test_id}/execute")
+async def execute_synthetic_test(test_id: int, db: Session = Depends(get_db)):
+    db_test = db.query(models.SyntheticTest).filter(models.SyntheticTest.id == test_id).first()
+    if not db_test:
+        raise HTTPException(status_code=404, detail="Synthetic test not found")
+    
+    execution = await synthetic_service.execute_test(db_test, db)
+    return execution
+
+@app.get("/api/synthetic-tests/{test_id}/executions", response_model=List[schemas.SyntheticExecution])
+def get_test_executions(test_id: int, limit: int = 50, db: Session = Depends(get_db)):
+    executions = db.query(models.SyntheticExecution)\
+        .filter(models.SyntheticExecution.test_id == test_id)\
+        .order_by(models.SyntheticExecution.executed_at.desc())\
+        .limit(limit)\
+        .all()
+    return executions
+
+@app.get("/api/synthetic-executions", response_model=List[schemas.SyntheticExecution])
+def get_all_executions(limit: int = 100, db: Session = Depends(get_db)):
+    executions = db.query(models.SyntheticExecution)\
+        .order_by(models.SyntheticExecution.executed_at.desc())\
+        .limit(limit)\
+        .all()
+    return executions
