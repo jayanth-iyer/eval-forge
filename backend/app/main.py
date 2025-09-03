@@ -7,10 +7,13 @@ import httpx
 import time
 import csv
 import io
+import asyncio
 from . import models, schemas, database
 from .metrics import calculate_metrics
 from .database import get_db
 from .question_bank import get_random_sample_dataset
+from .synthetic_monitoring import synthetic_service
+from .scheduler import scheduler
 
 app = FastAPI(title="Eval Forge API", version="1.0.0")
 
@@ -25,6 +28,16 @@ app.add_middleware(
 
 # Create tables
 models.Base.metadata.create_all(bind=database.engine)
+
+# Startup event to start scheduler
+@app.on_event("startup")
+async def startup_event():
+    await scheduler.start()
+
+# Shutdown event to stop scheduler
+@app.on_event("shutdown")
+async def shutdown_event():
+    scheduler.stop()
 
 
 @app.get("/")
@@ -354,3 +367,160 @@ def delete_evaluation_results(evaluation_id: int, db: Session = Depends(get_db))
     db.commit()
     
     return {"message": "Evaluation and results deleted"}
+
+# Synthetic Monitoring endpoints
+@app.get("/api/synthetic-tests", response_model=List[schemas.SyntheticTest])
+def get_synthetic_tests(db: Session = Depends(get_db)):
+    return db.query(models.SyntheticTest).filter(models.SyntheticTest.id == models.SyntheticTest.id).all()
+
+@app.post("/api/synthetic-tests", response_model=schemas.SyntheticTest)
+async def create_synthetic_test(test: schemas.SyntheticTestCreate, db: Session = Depends(get_db)):
+    db_test = models.SyntheticTest(**test.dict(), created_at=datetime.now())
+    db.add(db_test)
+    db.commit()
+    db.refresh(db_test)
+    
+    # Schedule the test if it's active
+    if db_test.is_active:
+        scheduler.schedule_test(db_test)
+    
+    return db_test
+
+@app.get("/api/synthetic-tests/{test_id}", response_model=schemas.SyntheticTest)
+def get_synthetic_test(test_id: int, db: Session = Depends(get_db)):
+    db_test = db.query(models.SyntheticTest).filter(models.SyntheticTest.id == test_id).first()
+    if not db_test:
+        raise HTTPException(status_code=404, detail="Synthetic test not found")
+    return db_test
+
+@app.put("/api/synthetic-tests/{test_id}", response_model=schemas.SyntheticTest)
+async def update_synthetic_test(test_id: int, test: schemas.SyntheticTestCreate, db: Session = Depends(get_db)):
+    db_test = db.query(models.SyntheticTest).filter(models.SyntheticTest.id == test_id).first()
+    if not db_test:
+        raise HTTPException(status_code=404, detail="Synthetic test not found")
+    
+    # Store old active state
+    was_active = db_test.is_active
+    
+    for key, value in test.dict().items():
+        setattr(db_test, key, value)
+    
+    db.commit()
+    db.refresh(db_test)
+    
+    # Update scheduling based on changes
+    if db_test.is_active and not was_active:
+        # Test was activated, schedule it
+        scheduler.schedule_test(db_test)
+    elif not db_test.is_active and was_active:
+        # Test was deactivated, unschedule it
+        scheduler.unschedule_test(test_id)
+    elif db_test.is_active:
+        # Test is still active, reschedule with potential new interval
+        scheduler.schedule_test(db_test)
+    
+    return db_test
+
+@app.delete("/api/synthetic-tests/{test_id}")
+async def delete_synthetic_test(test_id: int, db: Session = Depends(get_db)):
+    db_test = db.query(models.SyntheticTest).filter(models.SyntheticTest.id == test_id).first()
+    if not db_test:
+        raise HTTPException(status_code=404, detail="Synthetic test not found")
+    
+    # Unschedule the test
+    scheduler.unschedule_test(test_id)
+    
+    # Delete executions first
+    db.query(models.SyntheticExecution).filter(models.SyntheticExecution.test_id == test_id).delete()
+    db.delete(db_test)
+    db.commit()
+    
+    return {"message": "Synthetic test deleted"}
+
+@app.post("/api/synthetic-tests/{test_id}/execute")
+async def execute_synthetic_test(test_id: int, db: Session = Depends(get_db)):
+    db_test = db.query(models.SyntheticTest).filter(models.SyntheticTest.id == test_id).first()
+    if not db_test:
+        raise HTTPException(status_code=404, detail="Synthetic test not found")
+    
+    execution = await synthetic_service.execute_test(db_test, db)
+    return execution
+
+@app.get("/api/synthetic-tests/{test_id}/executions", response_model=List[schemas.SyntheticExecution])
+def get_test_executions(test_id: int, limit: int = 50, db: Session = Depends(get_db)):
+    executions = db.query(models.SyntheticExecution)\
+        .filter(models.SyntheticExecution.test_id == test_id)\
+        .order_by(models.SyntheticExecution.executed_at.desc())\
+        .limit(limit)\
+        .all()
+    return executions
+
+@app.get("/api/synthetic-executions", response_model=List[schemas.SyntheticExecution])
+def get_all_executions(limit: int = 100, db: Session = Depends(get_db)):
+    executions = db.query(models.SyntheticExecution)\
+        .order_by(models.SyntheticExecution.executed_at.desc())\
+        .limit(limit)\
+        .all()
+    return executions
+
+@app.get("/api/synthetic-monitoring/metrics")
+async def get_monitoring_metrics(db: Session = Depends(get_db)):
+    try:
+        # Get metrics for each test type
+        uptime_metrics = synthetic_service.get_monitoring_metrics(db, "uptime")
+        api_metrics = synthetic_service.get_monitoring_metrics(db, "api")
+        browser_metrics = synthetic_service.get_monitoring_metrics(db, "browser")
+        
+        return {
+            "uptime": uptime_metrics,
+            "api": api_metrics,
+            "browser": browser_metrics
+        }
+    except Exception as e:
+        logger.error(f"Error getting monitoring metrics: {e}")
+        raise HTTPException(status_code=500, detail="Something went wrong while fetching metrics")
+
+# External Apps endpoints
+@app.get("/api/external-apps", response_model=List[schemas.ExternalApp])
+def get_external_apps(db: Session = Depends(get_db)):
+    return db.query(models.ExternalApp).all()
+
+@app.post("/api/external-apps", response_model=schemas.ExternalApp)
+def create_external_app(app: schemas.ExternalAppCreate, db: Session = Depends(get_db)):
+    db_app = models.ExternalApp(**app.dict(), created_at=datetime.now())
+    db.add(db_app)
+    db.commit()
+    db.refresh(db_app)
+    return db_app
+
+@app.get("/api/external-apps/{app_id}", response_model=schemas.ExternalApp)
+def get_external_app(app_id: int, db: Session = Depends(get_db)):
+    db_app = db.query(models.ExternalApp).filter(models.ExternalApp.id == app_id).first()
+    if not db_app:
+        raise HTTPException(status_code=404, detail="External app not found")
+    return db_app
+
+@app.put("/api/external-apps/{app_id}", response_model=schemas.ExternalApp)
+def update_external_app(app_id: int, app: schemas.ExternalAppUpdate, db: Session = Depends(get_db)):
+    db_app = db.query(models.ExternalApp).filter(models.ExternalApp.id == app_id).first()
+    if not db_app:
+        raise HTTPException(status_code=404, detail="External app not found")
+    
+    for key, value in app.dict().items():
+        setattr(db_app, key, value)
+    
+    db_app.updated_at = datetime.now()
+    db.commit()
+    db.refresh(db_app)
+    return db_app
+
+@app.delete("/api/external-apps/{app_id}")
+def delete_external_app(app_id: int, db: Session = Depends(get_db)):
+    db_app = db.query(models.ExternalApp).filter(models.ExternalApp.id == app_id).first()
+    if not db_app:
+        raise HTTPException(status_code=404, detail="External app not found")
+    
+    db.delete(db_app)
+    db.commit()
+    
+    return {"message": "External app deleted"}
