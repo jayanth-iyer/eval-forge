@@ -146,6 +146,34 @@ class BrowserStep(BaseModel):
     value: Optional[str] = None
     timeout: int = 30
 
+# External App Endpoint schemas
+class ExternalAppEndpointBase(BaseModel):
+    name: str
+    endpoint_path: str
+    method: str = "GET"
+    description: Optional[str] = None
+    headers: Optional[str] = None
+    body: Optional[str] = None
+    expected_status: int = 200
+    expected_response_contains: Optional[str] = None
+    timeout: Optional[int] = None
+    is_active: bool = True
+
+class ExternalAppEndpointCreate(ExternalAppEndpointBase):
+    external_app_id: int
+
+class ExternalAppEndpointUpdate(ExternalAppEndpointBase):
+    pass
+
+class ExternalAppEndpoint(ExternalAppEndpointBase):
+    id: int
+    external_app_id: int
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
 # External App schemas
 class ExternalAppBase(BaseModel):
     name: str
@@ -154,7 +182,6 @@ class ExternalAppBase(BaseModel):
     description: Optional[str] = None
     auth_type: str = "none"
     auth_credentials: Optional[str] = None
-    health_endpoint: str = "/health"
     timeout: int = 30
     ssl_check_enabled: bool = False
     is_active: bool = True
@@ -169,6 +196,7 @@ class ExternalApp(ExternalAppBase):
     id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
+    endpoints: List[ExternalAppEndpoint] = []
 
     class Config:
         from_attributes = True

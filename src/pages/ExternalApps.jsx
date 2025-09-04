@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Plus, Edit, Trash2, Globe, Shield, Clock, CheckCircle, XCircle } from 'lucide-react'
+import { Plus, Edit, Trash2, Globe, Shield, Clock, CheckCircle, XCircle, Settings, List } from 'lucide-react'
 
 const ExternalApps = () => {
   const [apps, setApps] = useState([])
@@ -7,6 +7,7 @@ const ExternalApps = () => {
   const [editingApp, setEditingApp] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [appEndpoints, setAppEndpoints] = useState({})
 
   useEffect(() => {
     fetchApps()
@@ -18,6 +19,19 @@ const ExternalApps = () => {
       if (response.ok) {
         const data = await response.json()
         setApps(data)
+        // Fetch endpoints for each app
+        const endpointsData = {}
+        for (const app of data) {
+          try {
+            const endpointsResponse = await fetch(`http://localhost:8000/api/external-apps/${app.id}/endpoints`)
+            if (endpointsResponse.ok) {
+              endpointsData[app.id] = await endpointsResponse.json()
+            }
+          } catch (err) {
+            console.warn(`Failed to fetch endpoints for app ${app.id}:`, err)
+          }
+        }
+        setAppEndpoints(endpointsData)
       } else {
         throw new Error('Failed to fetch apps')
       }
@@ -121,6 +135,7 @@ const ExternalApps = () => {
             <AppCard
               key={app.id}
               app={app}
+              endpoints={appEndpoints[app.id] || []}
               onEdit={handleEdit}
               onDelete={handleDelete}
             />
@@ -132,6 +147,7 @@ const ExternalApps = () => {
       {showCreateModal && (
         <CreateAppModal
           app={editingApp}
+          endpoints={editingApp ? appEndpoints[editingApp.id] || [] : []}
           onClose={handleModalClose}
           onSuccess={handleModalSuccess}
         />
@@ -141,7 +157,7 @@ const ExternalApps = () => {
 }
 
 // App Card Component
-const AppCard = ({ app, onEdit, onDelete }) => {
+const AppCard = ({ app, endpoints, onEdit, onDelete }) => {
   const getAuthIcon = (authType) => {
     if (authType === 'none') return null
     return <Shield className="w-4 h-4 text-green-500" />
@@ -204,14 +220,25 @@ const AppCard = ({ app, onEdit, onDelete }) => {
             <p className="text-sm text-gray-700">{app.description}</p>
           </div>
         )}
+        
+        <div>
+          <p className="text-sm text-gray-500">API Endpoints</p>
+          <div className="flex items-center gap-2">
+            <List className="w-4 h-4 text-blue-500" />
+            <p className="text-sm font-medium text-gray-900">
+              {endpoints.length} endpoint{endpoints.length !== 1 ? 's' : ''} configured
+            </p>
+          </div>
+        </div>
       </div>
 
       <div className="mt-4 pt-4 border-t border-gray-100">
         <button
           onClick={() => onEdit(app)}
-          className="w-full bg-gray-50 text-gray-700 px-3 py-2 rounded-md hover:bg-gray-100 text-sm font-medium"
+          className="w-full bg-gray-50 text-gray-700 px-3 py-2 rounded-md hover:bg-gray-100 text-sm font-medium flex items-center justify-center gap-2"
         >
-          Configure Monitoring
+          <Settings className="w-4 h-4" />
+          Configure App & Endpoints
         </button>
       </div>
     </div>
@@ -219,7 +246,7 @@ const AppCard = ({ app, onEdit, onDelete }) => {
 }
 
 // Create/Edit App Modal Component
-const CreateAppModal = ({ app, onClose, onSuccess }) => {
+const CreateAppModal = ({ app, endpoints, onClose, onSuccess }) => {
   const [formData, setFormData] = useState({
     name: app?.name || '',
     service_name: app?.service_name || '',
@@ -228,10 +255,12 @@ const CreateAppModal = ({ app, onClose, onSuccess }) => {
     auth_type: app?.auth_type || 'none',
     auth_credentials: '',
     is_active: app?.is_active ?? true,
-    health_endpoint: app?.health_endpoint || '/health',
     timeout: app?.timeout || 30,
     ssl_check_enabled: app?.ssl_check_enabled ?? false
   })
+  const [appEndpoints, setAppEndpoints] = useState(endpoints || [])
+  const [showEndpointForm, setShowEndpointForm] = useState(false)
+  const [editingEndpoint, setEditingEndpoint] = useState(null)
   const [error, setError] = useState(null)
 
   const handleSubmit = async (e) => {
@@ -269,6 +298,33 @@ const CreateAppModal = ({ app, onClose, onSuccess }) => {
       })
       
       if (response.ok) {
+        const savedApp = await response.json()
+        
+        // If this is a new app and we have endpoints configured, create them
+        if (!app && appEndpoints.length > 0) {
+          for (const endpoint of appEndpoints) {
+            try {
+              const endpointPayload = {
+                ...endpoint,
+                external_app_id: savedApp.id
+              }
+              // Remove temporary ID
+              delete endpointPayload.id
+              
+              await fetch(`http://localhost:8000/api/external-apps/${savedApp.id}/endpoints`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(endpointPayload),
+              })
+            } catch (endpointError) {
+              console.warn('Failed to create endpoint:', endpointError)
+              // Continue with other endpoints even if one fails
+            }
+          }
+        }
+        
         onSuccess()
         setError(null)
       } else {
@@ -284,7 +340,7 @@ const CreateAppModal = ({ app, onClose, onSuccess }) => {
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <h2 className="text-xl font-bold text-gray-900 mb-4">
-          {app ? 'Edit External App' : 'Add External App'}
+          {app ? 'Edit External App - Multiple Endpoints' : 'Add External App - Multiple Endpoints'}
         </h2>
         
         {error && (
@@ -336,18 +392,6 @@ const CreateAppModal = ({ app, onClose, onSuccess }) => {
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Health Check Endpoint
-            </label>
-            <input
-              type="text"
-              value={formData.health_endpoint}
-              onChange={(e) => setFormData({ ...formData, health_endpoint: e.target.value })}
-              placeholder="/health"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -436,6 +480,43 @@ const CreateAppModal = ({ app, onClose, onSuccess }) => {
             )}
           </div>
 
+          {/* API Endpoints Section */}
+          <div className="border-t border-gray-200 pt-4">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-lg font-medium text-gray-900">API Endpoints</h3>
+              <button
+                type="button"
+                onClick={() => setShowEndpointForm(true)}
+                className="bg-green-600 text-white px-3 py-1 rounded-md hover:bg-green-700 text-sm flex items-center gap-1"
+              >
+                <Plus className="w-3 h-3" />
+                Add Endpoint
+              </button>
+            </div>
+            
+            {appEndpoints.length === 0 ? (
+              <div className="text-center py-6 bg-gray-50 rounded-md">
+                <List className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                <p className="text-sm text-gray-500">No endpoints configured</p>
+                <p className="text-xs text-gray-400">Add your first API endpoint to start monitoring</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {appEndpoints.map((endpoint) => (
+                  <EndpointCard
+                    key={endpoint.id || `new-${endpoint.name}`}
+                    endpoint={endpoint}
+                    onEdit={(ep) => {
+                      setEditingEndpoint(ep)
+                      setShowEndpointForm(true)
+                    }}
+                    onDelete={(epId) => handleDeleteEndpoint(epId)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="flex justify-end gap-3 pt-4">
             <button
               type="button"
@@ -449,6 +530,277 @@ const CreateAppModal = ({ app, onClose, onSuccess }) => {
               className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
             >
               {app ? 'Update App' : 'Add App'}
+            </button>
+          </div>
+        </form>
+        
+        {/* Endpoint Form Modal */}
+        {showEndpointForm && (
+          <EndpointFormModal
+            appId={app?.id}
+            endpoint={editingEndpoint}
+            isNewApp={!app}
+            onClose={() => {
+              setShowEndpointForm(false)
+              setEditingEndpoint(null)
+            }}
+            onSuccess={(newEndpoint) => {
+              if (editingEndpoint) {
+                setAppEndpoints(prev => prev.map(ep => ep.id === editingEndpoint.id ? newEndpoint : ep))
+              } else {
+                setAppEndpoints(prev => [...prev, newEndpoint])
+              }
+              setShowEndpointForm(false)
+              setEditingEndpoint(null)
+            }}
+          />
+        )}
+      </div>
+    </div>
+  )
+  
+  async function handleDeleteEndpoint(endpointId) {
+    if (!confirm('Are you sure you want to delete this endpoint?')) {
+      return
+    }
+    
+    try {
+      const response = await fetch(`http://localhost:8000/api/external-app-endpoints/${endpointId}`, {
+        method: 'DELETE'
+      })
+      
+      if (response.ok) {
+        setAppEndpoints(prev => prev.filter(ep => ep.id !== endpointId))
+      } else {
+        throw new Error('Failed to delete endpoint')
+      }
+    } catch (error) {
+      console.error('Error deleting endpoint:', error)
+      setError('Something went wrong while deleting endpoint')
+    }
+  }
+}
+
+// Endpoint Card Component
+const EndpointCard = ({ endpoint, onEdit, onDelete }) => {
+  const getMethodColor = (method) => {
+    const colors = {
+      GET: 'bg-green-100 text-green-800',
+      POST: 'bg-blue-100 text-blue-800',
+      PUT: 'bg-yellow-100 text-yellow-800',
+      DELETE: 'bg-red-100 text-red-800',
+      PATCH: 'bg-purple-100 text-purple-800'
+    }
+    return colors[method] || 'bg-gray-100 text-gray-800'
+  }
+
+  return (
+    <div className="border border-gray-200 rounded-md p-3 bg-white">
+      <div className="flex justify-between items-start">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-2">
+            <span className={`px-2 py-1 rounded text-xs font-medium ${getMethodColor(endpoint.method)}`}>
+              {endpoint.method}
+            </span>
+            <span className="font-medium text-gray-900">{endpoint.name}</span>
+          </div>
+          <p className="text-sm text-gray-600 font-mono">{endpoint.endpoint_path}</p>
+          {endpoint.description && (
+            <p className="text-xs text-gray-500 mt-1">{endpoint.description}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => onEdit(endpoint)}
+            className="p-1 text-gray-400 hover:text-blue-600"
+          >
+            <Edit className="w-3 h-3" />
+          </button>
+          <button
+            onClick={() => onDelete(endpoint.id)}
+            className="p-1 text-gray-400 hover:text-red-600"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Endpoint Form Modal Component
+const EndpointFormModal = ({ appId, endpoint, isNewApp, onClose, onSuccess }) => {
+  const [formData, setFormData] = useState({
+    name: endpoint?.name || '',
+    endpoint_path: endpoint?.endpoint_path || '',
+    method: endpoint?.method || 'GET',
+    description: endpoint?.description || '',
+    headers: endpoint?.headers || '',
+    body: endpoint?.body || '',
+    expected_status: endpoint?.expected_status || 200,
+    expected_response_contains: endpoint?.expected_response_contains || '',
+    timeout: endpoint?.timeout || null,
+    is_active: endpoint?.is_active ?? true
+  })
+  const [error, setError] = useState(null)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    try {
+      // For new apps, just store the endpoint locally without making API calls
+      if (isNewApp) {
+        const newEndpoint = {
+          ...formData,
+          id: `temp-${Date.now()}`, // Temporary ID for local storage
+          external_app_id: null // Will be set when app is created
+        }
+        onSuccess(newEndpoint)
+        return
+      }
+
+      // For existing apps, make API calls as before
+      const url = endpoint ? 
+        `http://localhost:8000/api/external-app-endpoints/${endpoint.id}` : 
+        `http://localhost:8000/api/external-apps/${appId}/endpoints`
+      
+      const method = endpoint ? 'PUT' : 'POST'
+      const payload = { ...formData }
+      if (!endpoint) {
+        payload.external_app_id = appId
+      }
+      
+      const response = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+      
+      if (response.ok) {
+        const result = await response.json()
+        onSuccess(result)
+      } else {
+        throw new Error(`Failed to ${endpoint ? 'update' : 'create'} endpoint`)
+      }
+    } catch (error) {
+      console.error(`Error ${endpoint ? 'updating' : 'creating'} endpoint:`, error)
+      setError('Something went wrong while saving endpoint')
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-60">
+      <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <h3 className="text-lg font-bold text-gray-900 mb-4">
+          {endpoint ? 'Edit Endpoint' : 'Add Endpoint'}
+        </h3>
+        
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-md p-3 mb-4">
+            <p className="text-red-800 text-sm">{error}</p>
+          </div>
+        )}
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Endpoint Name *
+            </label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="Health Check"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Endpoint Path *
+            </label>
+            <input
+              type="text"
+              value={formData.endpoint_path}
+              onChange={(e) => setFormData({ ...formData, endpoint_path: e.target.value })}
+              placeholder="/health"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              HTTP Method
+            </label>
+            <select
+              value={formData.method}
+              onChange={(e) => setFormData({ ...formData, method: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+              <option value="PUT">PUT</option>
+              <option value="DELETE">DELETE</option>
+              <option value="PATCH">PATCH</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Description
+            </label>
+            <input
+              type="text"
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              placeholder="Optional description"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Expected Status Code
+            </label>
+            <input
+              type="number"
+              value={formData.expected_status}
+              onChange={(e) => setFormData({ ...formData, expected_status: parseInt(e.target.value) })}
+              min="100"
+              max="599"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="endpoint_active"
+              checked={formData.is_active}
+              onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <label htmlFor="endpoint_active" className="text-sm text-gray-700">
+              Active
+            </label>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            >
+              {endpoint ? 'Update' : 'Add'} Endpoint
             </button>
           </div>
         </form>

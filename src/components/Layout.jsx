@@ -1,6 +1,6 @@
 import React from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Brain, Database, BarChart3, Settings, Activity, Globe } from 'lucide-react'
+import { Brain, Database, BarChart3, Settings, Activity } from 'lucide-react'
 
 const Layout = ({ children }) => {
   const location = useLocation()
@@ -11,7 +11,6 @@ const Layout = ({ children }) => {
     { name: 'Evaluations', href: '/evaluations', icon: Settings },
     { name: 'Results', href: '/results', icon: Database },
     { name: 'Synthetic Monitoring', href: '/synthetic-monitoring', icon: Activity },
-    { name: 'External Apps', href: '/external-apps', icon: Globe },
   ]
 
   return (
