@@ -63,10 +63,13 @@ def migrate_database():
         
         missing_execution_columns = []
         expected_execution_columns = [
-            ('details', 'TEXT'),
+            ('response_body', 'TEXT'),
+            ('error_message', 'TEXT'),
+            ('dns_time', 'REAL'),
             ('connect_time', 'REAL'),
             ('ssl_time', 'REAL'),
-            ('first_byte_time', 'REAL')
+            ('first_byte_time', 'REAL'),
+            ('details', 'TEXT')
         ]
         
         for col_name, col_def in expected_execution_columns:
@@ -96,7 +99,6 @@ def migrate_database():
                     description TEXT,
                     auth_type TEXT DEFAULT "none",
                     auth_credentials TEXT,
-                    health_endpoint TEXT DEFAULT "/health",
                     timeout INTEGER DEFAULT 30,
                     ssl_check_enabled BOOLEAN DEFAULT 0,
                     is_active BOOLEAN DEFAULT 1,
@@ -105,6 +107,68 @@ def migrate_database():
                 )
             ''')
             migrations_applied.append("Created external_apps table")
+        else:
+            # Remove health_endpoint column if it exists (migration from old structure)
+            cursor.execute("PRAGMA table_info(external_apps)")
+            columns = [column[1] for column in cursor.fetchall()]
+            if 'health_endpoint' in columns:
+                print("Migrating external_apps table to remove health_endpoint...")
+                # Create new table without health_endpoint
+                cursor.execute('''
+                    CREATE TABLE external_apps_new (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT,
+                        service_name TEXT,
+                        base_url TEXT,
+                        description TEXT,
+                        auth_type TEXT DEFAULT "none",
+                        auth_credentials TEXT,
+                        timeout INTEGER DEFAULT 30,
+                        ssl_check_enabled BOOLEAN DEFAULT 0,
+                        is_active BOOLEAN DEFAULT 1,
+                        created_at DATETIME,
+                        updated_at DATETIME
+                    )
+                ''')
+                # Copy data (excluding health_endpoint)
+                cursor.execute('''
+                    INSERT INTO external_apps_new (id, name, service_name, base_url, description, 
+                                                   auth_type, auth_credentials, timeout, ssl_check_enabled, 
+                                                   is_active, created_at, updated_at)
+                    SELECT id, name, service_name, base_url, description, 
+                           auth_type, auth_credentials, timeout, ssl_check_enabled, 
+                           is_active, created_at, updated_at
+                    FROM external_apps
+                ''')
+                # Drop old table and rename new one
+                cursor.execute("DROP TABLE external_apps")
+                cursor.execute("ALTER TABLE external_apps_new RENAME TO external_apps")
+                migrations_applied.append("Migrated external_apps table structure")
+        
+        # Create external_app_endpoints table if it doesn't exist
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='external_app_endpoints'")
+        if not cursor.fetchone():
+            print("Creating external_app_endpoints table...")
+            cursor.execute('''
+                CREATE TABLE external_app_endpoints (
+                    id INTEGER PRIMARY KEY,
+                    external_app_id INTEGER,
+                    name TEXT,
+                    endpoint_path TEXT,
+                    method TEXT DEFAULT "GET",
+                    description TEXT,
+                    headers TEXT,
+                    body TEXT,
+                    expected_status INTEGER DEFAULT 200,
+                    expected_response_contains TEXT,
+                    timeout INTEGER,
+                    is_active BOOLEAN DEFAULT 1,
+                    created_at DATETIME,
+                    updated_at DATETIME,
+                    FOREIGN KEY (external_app_id) REFERENCES external_apps (id)
+                )
+            ''')
+            migrations_applied.append("Created external_app_endpoints table")
         
         # Migrate legacy metrics columns if they exist
         cursor.execute("PRAGMA table_info(results)")

@@ -115,8 +115,14 @@ class SyntheticExecution(Base):
     test_id = Column(Integer, ForeignKey("synthetic_tests.id"))
     status = Column(String)  # success, failure, timeout
     response_time = Column(Float)  # in milliseconds
-    status_code = Column(Integer)
-    details = Column(Text)  # JSON string with additional details
+    status_code = Column(Integer, nullable=True)
+    response_body = Column(Text, nullable=True)  # Response body content
+    error_message = Column(Text, nullable=True)  # Error details
+    dns_time = Column(Float, nullable=True)  # DNS lookup time in ms
+    connect_time = Column(Float, nullable=True)  # Connection time in ms
+    ssl_time = Column(Float, nullable=True)  # SSL handshake time in ms
+    first_byte_time = Column(Float, nullable=True)  # Time to first byte in ms
+    details = Column(Text, nullable=True)  # JSON string with additional details
     executed_at = Column(DateTime)
     
     test = relationship("SyntheticTest", back_populates="executions")
@@ -131,9 +137,30 @@ class ExternalApp(Base):
     description = Column(Text)
     auth_type = Column(String, default="none")  # none, api_key, bearer_token
     auth_credentials = Column(Text)  # JSON string with auth details
-    health_endpoint = Column(String, default="/health")
     timeout = Column(Integer, default=30)
     ssl_check_enabled = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime)
     updated_at = Column(DateTime)
+    
+    endpoints = relationship("ExternalAppEndpoint", back_populates="external_app", cascade="all, delete-orphan")
+
+class ExternalAppEndpoint(Base):
+    __tablename__ = "external_app_endpoints"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    external_app_id = Column(Integer, ForeignKey("external_apps.id"))
+    name = Column(String, index=True)  # e.g., "Health Check", "User API", "Orders API"
+    endpoint_path = Column(String)  # e.g., "/health", "/api/v1/users", "/api/v1/orders"
+    method = Column(String, default="GET")  # GET, POST, PUT, DELETE, PATCH
+    description = Column(Text, nullable=True)
+    headers = Column(Text, nullable=True)  # JSON string for custom headers
+    body = Column(Text, nullable=True)  # JSON string for request body
+    expected_status = Column(Integer, default=200)
+    expected_response_contains = Column(String, nullable=True)
+    timeout = Column(Integer, nullable=True)  # Override app-level timeout if needed
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime)
+    updated_at = Column(DateTime)
+    
+    external_app = relationship("ExternalApp", back_populates="endpoints")

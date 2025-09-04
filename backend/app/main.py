@@ -524,3 +524,57 @@ def delete_external_app(app_id: int, db: Session = Depends(get_db)):
     db.commit()
     
     return {"message": "External app deleted"}
+
+# External App Endpoints endpoints
+@app.get("/api/external-apps/{app_id}/endpoints", response_model=List[schemas.ExternalAppEndpoint])
+def get_external_app_endpoints(app_id: int, db: Session = Depends(get_db)):
+    db_app = db.query(models.ExternalApp).filter(models.ExternalApp.id == app_id).first()
+    if not db_app:
+        raise HTTPException(status_code=404, detail="External app not found")
+    return db.query(models.ExternalAppEndpoint).filter(models.ExternalAppEndpoint.external_app_id == app_id).all()
+
+@app.post("/api/external-apps/{app_id}/endpoints", response_model=schemas.ExternalAppEndpoint)
+def create_external_app_endpoint(app_id: int, endpoint: schemas.ExternalAppEndpointCreate, db: Session = Depends(get_db)):
+    db_app = db.query(models.ExternalApp).filter(models.ExternalApp.id == app_id).first()
+    if not db_app:
+        raise HTTPException(status_code=404, detail="External app not found")
+    
+    endpoint_data = endpoint.dict()
+    endpoint_data['external_app_id'] = app_id
+    db_endpoint = models.ExternalAppEndpoint(**endpoint_data, created_at=datetime.now())
+    db.add(db_endpoint)
+    db.commit()
+    db.refresh(db_endpoint)
+    return db_endpoint
+
+@app.get("/api/external-app-endpoints/{endpoint_id}", response_model=schemas.ExternalAppEndpoint)
+def get_external_app_endpoint(endpoint_id: int, db: Session = Depends(get_db)):
+    db_endpoint = db.query(models.ExternalAppEndpoint).filter(models.ExternalAppEndpoint.id == endpoint_id).first()
+    if not db_endpoint:
+        raise HTTPException(status_code=404, detail="External app endpoint not found")
+    return db_endpoint
+
+@app.put("/api/external-app-endpoints/{endpoint_id}", response_model=schemas.ExternalAppEndpoint)
+def update_external_app_endpoint(endpoint_id: int, endpoint: schemas.ExternalAppEndpointUpdate, db: Session = Depends(get_db)):
+    db_endpoint = db.query(models.ExternalAppEndpoint).filter(models.ExternalAppEndpoint.id == endpoint_id).first()
+    if not db_endpoint:
+        raise HTTPException(status_code=404, detail="External app endpoint not found")
+    
+    for key, value in endpoint.dict(exclude_unset=True).items():
+        setattr(db_endpoint, key, value)
+    
+    db_endpoint.updated_at = datetime.now()
+    db.commit()
+    db.refresh(db_endpoint)
+    return db_endpoint
+
+@app.delete("/api/external-app-endpoints/{endpoint_id}")
+def delete_external_app_endpoint(endpoint_id: int, db: Session = Depends(get_db)):
+    db_endpoint = db.query(models.ExternalAppEndpoint).filter(models.ExternalAppEndpoint.id == endpoint_id).first()
+    if not db_endpoint:
+        raise HTTPException(status_code=404, detail="External app endpoint not found")
+    
+    db.delete(db_endpoint)
+    db.commit()
+    
+    return {"message": "External app endpoint deleted"}
